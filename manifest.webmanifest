@@ -1,0 +1,11 @@
+{
+  "name": "TopRC : Hornets Run",
+  "short_name": "Hornets Run",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#070505",
+  "theme_color": "#120d0a",
+  "icons": [ { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" } ]
+}
