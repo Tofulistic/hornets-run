@@ -79,7 +79,9 @@ class Game {
     for (const m of this.missiles || []) m.dispose();
     for (const f of this.flares || []) this.scene.remove(f.s);
     this.fx.clear();
-    this.ais = []; this.missiles = []; this.flares = []; this.t = 0; this.done = false; this.paused = false;
+    this.runId = (this.runId || 0) + 1;
+    this.ais = []; this.missiles = []; this.flares = []; this.t = 0; this.done = false;
+    this.endT = undefined; this.crashSaid = false; this.trapSaid = false; this.warnText = null; this.lines = []; this.arrowTo = null; $('results').classList.add('hidden'); this.paused = false;
     this.msg = ''; this.msgT = 0; this.lockT = 0; this.lockTarget = null; this.fireCd = 0; this.flareCd = 0; this.gunCd = 0;
     this.ammo = { msl: 8, flr: 30 }; this.manualGear = null; this.manualHook = null; this.thrSpring = 0;
     const W = this.world, sp = W.spawn, b = this.body;
@@ -320,7 +322,8 @@ class Game {
     if (this.mission === 'free') { title = 'Crashed'; rows.push(['Flight time', fmt(this.t)]); }
     $('resTitle').textContent = title;
     $('resBody').innerHTML = rows.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
-    setTimeout(() => { if (this.done && game === this) $('results').classList.remove('hidden'); }, 600);
+    const run = this.runId = (this.runId || 0) + 1;
+    setTimeout(() => { if (this.done && game === this && this.runId === run) $('results').classList.remove('hidden'); }, 600);
   }
   // ---- cameras: pilot on the ground (Phoenix-style, auto-zoom), chase, cockpit, cinematic
   updateCamera(dt) {
