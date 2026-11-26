@@ -5,7 +5,9 @@ export class Sound {
   init() {
     if (this.ctx) { this.ctx.resume?.(); return; }
     const C = this.ctx = new (window.AudioContext || window.webkitAudioContext)();
-    this.master = C.createGain(); this.master.gain.value = this.vol; this.master.connect(C.destination);
+    this.master = C.createGain(); this.master.gain.value = this.vol;
+    const lim = C.createDynamicsCompressor(); lim.threshold.value = -6; lim.knee.value = 4; lim.ratio.value = 12; lim.attack.value = 0.003; lim.release.value = 0.2; // never clip
+    this.master.connect(lim); lim.connect(C.destination);
     this.sfx = C.createGain(); this.sfx.connect(this.master);
     this.music = C.createGain(); this.music.gain.value = this.musicVol; this.music.connect(this.master);
     const len = C.sampleRate * 2, b = C.createBuffer(1, len, C.sampleRate), d = b.getChannelData(0);
@@ -78,37 +80,37 @@ export class Anthem {
   constructor(sound) { this.s = sound; this.nodes = []; this.playing = false; }
   start(at = 0) {
     const S = this.s; S.init(); const C = S.ctx; this.stop();
-    const out = this.out = C.createGain(); out.gain.value = 1; out.connect(S.music);
+    const out = this.out = C.createGain(); out.gain.value = 1.5; out.connect(S.music);
     const t0 = C.currentTime + 0.05 + at; this.t0 = t0; this.playing = true;
     const beat = 60 / 92, bar = beat * 4;
     const rev = this.reverb(C); rev.connect(out);
-    const wet = C.createGain(); wet.gain.value = 0.35; wet.connect(rev);
+    const wet = C.createGain(); wet.gain.value = 0.25; wet.connect(rev);
     const bus = C.createGain(); bus.connect(out); bus.connect(wet);
     const prog = [[D, D + 3, D + 7], [D - 4, D, D + 3], [D - 9 + 12, D + 3, D + 7 - 12 + 12], [D - 2, D + 2, D + 5]]; // Dm  Bb  F  C (voiced)
     const roots = [D - 24, D - 28, D - 21, D - 26];
     // 1) the swell: pad + low drone, 4 bars
     for (let b = 0; b < 8; b++) {
       const ch = prog[b % 4], st = t0 + b * bar;
-      for (const n of ch) this.pad(bus, NOTE(n), st, bar * 1.05, b < 4 ? 0.035 + b * 0.008 : 0.06);
-      this.pad(bus, NOTE(roots[b % 4]), st, bar * 1.05, 0.08, 'triangle');
+      for (const n of ch) this.pad(bus, NOTE(n), st, bar * 1.05, b < 4 ? 0.016 + b * 0.004 : 0.028);
+      this.pad(bus, NOTE(roots[b % 4]), st, bar * 1.05, 0.05, 'triangle');
     }
     // heartbeat on the swell
-    for (let i = 0; i < 16; i++) this.kick(bus, t0 + i * beat * 2, 0.25 + i * 0.02);
+    for (let i = 0; i < 16; i++) this.kick(bus, t0 + i * beat * 2, 0.18 + i * 0.012);
     // 2) the hit at bar 8 (title), then the band
     const hit = t0 + 8 * bar; this.hitT = hit - t0;
     this.boomHit(bus, hit);
     for (let b = 0; b < 8; b++) {
       const st = hit + b * bar, ch = prog[b % 4];
-      for (let k = 0; k < 4; k++) { this.kick(bus, st + k * beat, 0.55); if (k % 2) this.snare(bus, st + k * beat, 0.32); }
-      for (let k = 0; k < 8; k++) this.hat(bus, st + k * beat / 2, 0.05);
+      for (let k = 0; k < 4; k++) { this.kick(bus, st + k * beat, 0.42); if (k % 2) this.snare(bus, st + k * beat, 0.2); }
+      for (let k = 0; k < 8; k++) this.hat(bus, st + k * beat / 2, 0.035);
       // eighth-note power chords (root + fifth + octave) through a fuzz
       for (let k = 0; k < 8; k++) this.power(bus, NOTE(roots[b % 4] + 12), st + k * beat / 2, beat / 2 * 0.9, k % 4 === 0 ? 0.09 : 0.06);
-      for (const n of ch) this.pad(bus, NOTE(n), st, bar, 0.035);
+      for (const n of ch) this.pad(bus, NOTE(n), st, bar, 0.016);
     }
     // lead line over the band (original melody)
     const mel = [[69, 2], [74, 1], [72, 1], [70, 3], [69, 1], [65, 2], [67, 1], [69, 1], [64, 4], [69, 2], [74, 1], [76, 1], [77, 3], [76, 1], [74, 2], [72, 1], [70, 1], [69, 4]];
     let tt = hit + 0 * bar;
-    for (const [n, d] of mel) { this.lead(bus, NOTE(n), tt, d * beat * 0.95, 0.07); tt += d * beat; }
+    for (const [n, d] of mel) { this.lead(bus, NOTE(n), tt, d * beat * 0.95, 0.045); tt += d * beat; }
     this.dur = 16 * bar + 2;
   }
   osc(type, f, st, dur, g0, dest, { attack = 0.02, release = 0.3, detune = 0 } = {}) {
@@ -129,8 +131,9 @@ export class Anthem {
   power(dest, f, st, dur, g) {
     const C = this.s.ctx; const ws = C.createWaveShaper(); const k = 30, n = 1024, cv = new Float32Array(n);
     for (let i = 0; i < n; i++) { const x = (i / n) * 2 - 1; cv[i] = ((1 + k) * x) / (1 + k * Math.abs(x)); } ws.curve = cv;
-    const lp = C.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1800; ws.connect(lp); lp.connect(dest);
-    for (const m of [1, 1.4983, 2]) this.osc('sawtooth', f * m, st, dur, g, ws, { attack: 0.005, release: 0.06 });
+    const lp = C.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1800; const vol = C.createGain(); vol.gain.value = g * 1.1;
+    ws.connect(lp); lp.connect(vol); vol.connect(dest);
+    for (const m of [1, 1.4983, 2]) this.osc('sawtooth', f * m, st, dur, 0.5, ws, { attack: 0.005, release: 0.06 }); // the fuzz sets the level, vol scales it
   }
   kick(dest, st, g) {
     const C = this.s.ctx; const o = C.createOscillator(); o.frequency.setValueAtTime(140, st); o.frequency.exponentialRampToValueAtTime(42, st + 0.18);
@@ -142,13 +145,13 @@ export class Anthem {
   }
   snare(dest, st, g) { this.noiseHit(dest, st, 0.22, g, 1500); this.osc('triangle', 190, st, 0.05, g * 0.6, dest, { attack: 0.002, release: 0.08 }); }
   hat(dest, st, g) { this.noiseHit(dest, st, 0.05, g, 7000); }
-  boomHit(dest, st) { this.kick(dest, st, 1); this.noiseHit(dest, st, 2.5, 0.35, 300, 'lowpass'); for (const n of [D - 24, D - 12, D - 5, D]) this.osc('sawtooth', NOTE(n), st, 1.5, 0.05, dest, { attack: 0.005, release: 1.5 }); }
+  boomHit(dest, st) { this.kick(dest, st, 0.7); this.noiseHit(dest, st, 2.5, 0.22, 300, 'lowpass'); for (const n of [D - 24, D - 12, D - 5, D]) this.osc('sawtooth', NOTE(n), st, 1.5, 0.03, dest, { attack: 0.005, release: 1.5 }); }
   reverb(C) {
     const len = C.sampleRate * 2.6, b = C.createBuffer(2, len, C.sampleRate);
     for (let ch = 0; ch < 2; ch++) { const d = b.getChannelData(ch); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3); }
     const cv = C.createConvolver(); cv.buffer = b; return cv;
   }
   get time() { return this.playing ? this.s.ctx.currentTime - this.t0 : 0; }
-  fade(sec = 1.5) { if (!this.out) return; const t = this.s.ctx.currentTime; this.out.gain.setTargetAtTime(0, t, sec / 3); setTimeout(() => this.stop(), sec * 1000 + 200); }
+  fade(sec = 1.5) { if (!this.out) return; const out = this.out, t = this.s.ctx.currentTime; out.gain.setTargetAtTime(0, t, sec / 3); setTimeout(() => { if (this.out === out) this.stop(); }, sec * 1000 + 200); }
   stop() { for (const n of this.nodes) { try { n.stop(); } catch (e) { /* already stopped */ } } this.nodes = []; try { this.out?.disconnect(); } catch (e) { /* ignore */ } this.out = null; this.playing = false; }
 }

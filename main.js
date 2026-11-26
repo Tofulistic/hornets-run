@@ -548,7 +548,7 @@ music.onchange = musicUI; musicUI();
 $('btnMusic').onclick = () => $('musicFile').click();
 $('musicFile').onchange = async (e) => { const f = e.target.files[0]; if (f) { $('musicName').textContent = 'Loading…'; await music.load(f); cfg.introMusic = 'mine'; saveCfg(); syncSeg(); } e.target.value = ''; };
 $('btnMusicClear').onclick = () => music.clear();
-$('btnReplay').onclick = () => { $('menu').classList.add('hidden'); playIntro(); };
+$('btnReplay').onclick = () => { if (menuSong) { music.stop(); menuSong = false; } $('menu').classList.add('hidden'); playIntro(); };
 
 function padStatus() {
   const p = input.pad(); $('padDot').classList.toggle('ok', !!p || link.status === 'connected');
@@ -603,14 +603,15 @@ function endIntro() {
   if (!intro) return; intro.dispose(); intro = null; document.body.classList.remove('cine'); $('introUI').classList.add('hidden'); if (!introSong) $('rights').classList.remove('show');
   clearTimeout(introSongTimer);
   if (introSong) { // the song carries on quietly under the menu until it ends or you fly
-    if (!music.playing) music.stop(); else { music.audio.volume = music.vol * 0.55; menuSong = true; music.audio.onended = () => { menuSong = false; $('rights').classList.remove('show'); }; }
+    if (!music.playing || music.audio.ended) { music.stop(); $('rights').classList.remove('show'); } else { music.audio.volume = music.vol * 0.55; menuSong = true; music.audio.onended = () => { menuSong = false; $('rights').classList.remove('show'); }; }
   } else anthem.fade(2);
   cfg.seenIntro = true; saveCfg();
   $('menu').classList.remove('hidden'); menuBackdrop(); placeInd(true); enterMenu();
 }
 function introFrame(dt) {
   // lock the pictures to the music clock so the title always lands on the beat, even if frames drop
-  const clock = introSong ? (music.audio.paused && !music.audio.currentTime ? null : music.audio.currentTime + intro.songDelay) : anthem.playing ? anthem.time : null;
+  if (introSong && music.audio.ended) { endIntro(); return; } // song finished: straight to the menu, no frozen frame
+  const clock = introSong ? (music.audio.paused ? null : music.audio.currentTime + intro.songDelay) : anthem.playing ? anthem.time : null;
   if (clock != null && clock > intro.t) dt = Math.min(0.25, clock - intro.t); else if (clock != null) dt = 0;
   intro.update(dt); const t = intro.u;
   for (const [i, c] of CARDS.entries()) {
@@ -620,7 +621,12 @@ function introFrame(dt) {
   renderer.toneMappingExposure = 1.05; bloom.strength = 0.55; rpass.scene = intro.scene; rpass.camera = intro.camera; composer.render();
   if (intro.done) endIntro();
 }
-$('splash').onclick = () => { $('splash').classList.add('hidden'); sound.init(); playIntro(); };
+$('splash').onclick = () => {
+  $('splash').classList.add('hidden'); sound.init();
+  // unlock the song element inside the tap (iPhone/Safari block play() that starts later otherwise)
+  if (cfg.introMusic === 'mine' && music.loaded) { music.audio.muted = true; music.audio.play().then(() => { music.audio.pause(); music.audio.muted = false; }, () => { music.audio.muted = false; }); }
+  playIntro();
+};
 $('introUI').onclick = skipIntro;
 
 // phone opened with #pad-<code>: become the controller instead of the game
