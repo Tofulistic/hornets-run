@@ -30,8 +30,10 @@ function crew(color, { helmet = color } = {}) {
 }
 
 export class Intro {
-  constructor(renderer) {
-    this.renderer = renderer; this.t = 0; this.done = false;
+  // pre: seconds of extra deck footage before the main sequence (so the title lands on the song's big moment)
+  // loopUntil: keep cutting more launches until this time (the length of the player's song)
+  constructor(renderer, { pre = 0, loopUntil = 0 } = {}) {
+    this.renderer = renderer; this.t = 0; this.done = false; this.pre = pre; this.loopUntil = loopUntil; this.uOff = 0; this.cycle = 0;
     const scene = this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.1, 6000);
     const sunDir = new V3(0.0, 0.07, -1).normalize();
@@ -85,13 +87,29 @@ export class Intro {
       { t: 21.0, d: 9.0, chase: true, fov: 50 },
     ];
     this.total = 29.5; this.launchT = 19.0; this.jetZ = 0; this.jetV = 0;
+    // B-roll for a long song intro: slow looks around the deck before the main sequence
+    this.broll = [
+      { d: 6, from: [-30, 1.2, 120], to: [-24, 1.4, 100], look: [0, 2, 40], lookTo: [0, 2, 20], fov: 32 },
+      { d: 5.5, from: [-18, 2.2, 66], to: [-22, 2.0, 76], look: [-24, 2.6, 70], lookTo: [-24, 2.4, 90], fov: 30 },
+      { d: 5.5, from: [12, 0.9, 30], to: [6, 0.9, 20], look: [0, 1.6, 0], lookTo: [0, 2.0, -4], fov: 38 },
+      { d: 6, from: [60, 30, 140], to: [50, 26, 90], look: [0, 0, 0], lookTo: [0, 0, -30], fov: 34 },
+      { d: 5, from: [-40, 1.7, 30], to: [-40, 1.7, 10], look: [-44, 1.2, 30], lookTo: [-40, 1.2, 4], fov: 40 },
+      { d: 6, from: [20, 4, -200], to: [10, 3, -170], look: [0, 6, 0], lookTo: [0, 6, 20], fov: 26 },
+    ];
   }
   resize() { this.camera.aspect = innerWidth / innerHeight; this.camera.updateProjectionMatrix(); }
   update(dt) {
-    const t = this.t += dt; const C = this.crew;
+    this.t += dt; const C = this.crew;
+    // u = time in the main sequence (negative during the B-roll pre-roll)
+    let t = this.t - this.pre - this.uOff;
+    if (t > this.total - 1 && this.loopUntil && this.t < this.loopUntil - 12) { // song still going: another launch, mirrored angles
+      this.uOff += this.total - 1 - 8.8; t = 8.8; this.cycle++; this.jetZ = 0; this.jetV = 0; this.jet.position.set(0, 2.35, 0); this.jet.rotation.set(0, 0, 0);
+      C.shooter.position.y = 0; C.shooter.rotation.y = -1.2; C.shooter.userData.R.rotation.set(0, 0, 0); C.shooter.userData.legL.rotation.x = 0;
+    }
+    this.u = t;
     this.water.material.uniforms.time.value = t * 0.5;
     // crew motion: walkers, director arm waves, thumbs-up, shooter's launch signal
-    for (const k of ['walker1', 'walker2']) { const m = C[k]; m.position.z -= dt * 1.3; const s = Math.sin(t * 6); m.userData.legL.rotation.x = s * 0.5; m.userData.legR.rotation.x = -s * 0.5; m.userData.L.rotation.x = -s * 0.4; m.userData.R.rotation.x = s * 0.4; }
+    for (const k of ['walker1', 'walker2']) { const m = C[k]; m.position.z -= dt * 1.3; if (m.position.z < -90) m.position.z = 70; const s = Math.sin(t * 6); m.userData.legL.rotation.x = s * 0.5; m.userData.legR.rotation.x = -s * 0.5; m.userData.L.rotation.x = -s * 0.4; m.userData.R.rotation.x = s * 0.4; }
     const Y = C.yellow.userData; Y.L.rotation.z = -2.4 + Math.sin(t * 3) * 0.5; Y.R.rotation.z = 2.4 - Math.sin(t * 3 + 1) * 0.5;
     const thumbs = t > 13 ? ease(Math.min(1, (t - 13) * 2)) : 0;
     for (const k of ['green1', 'white', 'brown', 'red']) C[k].userData.R.rotation.z = lerp(0, 2.3, thumbs);
@@ -114,19 +132,30 @@ export class Intro {
     for (let i = this.steam.length - 1; i >= 0; i--) { const p = this.steam[i]; p.a += dt; p.s.position.y += dt * 0.8; p.s.position.x += dt * 0.6; p.s.scale.setScalar(2 + p.a * 3); p.s.material.opacity = 0.35 * Math.max(0, 1 - p.a / 3); if (p.a > 3) { this.scene.remove(p.s); this.steam.splice(i, 1); } }
     // camera
     const cam = this.camera; let sh = this.shots[0]; for (const s of this.shots) if (t >= s.t) sh = s;
+    if (t < 0) { // pre-roll B-roll
+      let acc = 0, i = 0; const tt = this.t; while (acc + this.broll[i % this.broll.length].d <= tt) { acc += this.broll[i % this.broll.length].d; i++; }
+      sh = { ...this.broll[i % this.broll.length], t: acc };
+      const k = ease(Math.min(1, (tt - acc) / sh.d));
+      if (cam.fov !== sh.fov) { cam.fov = sh.fov; cam.updateProjectionMatrix(); }
+      cam.position.set(lerp(sh.from[0], sh.to[0], k), lerp(sh.from[1], sh.to[1], k), lerp(sh.from[2], sh.to[2], k));
+      cam.lookAt(lerp(sh.look[0], sh.lookTo[0], k), lerp(sh.look[1], sh.lookTo[1], k), lerp(sh.look[2], sh.lookTo[2], k));
+      this.sun.target.position.copy(cam.position).setY(0); this.sun.position.copy(this.sun.target.position).add(new V3(0, 0.07, -1).normalize().multiplyScalar(200));
+      return;
+    }
+    const mir = this.cycle % 2 ? -1 : 1;
     if (cam.fov !== sh.fov) { cam.fov = sh.fov; cam.updateProjectionMatrix(); }
     if (sh.chase) {
       const k = Math.min(1, (t - sh.t) / sh.d); const jp = this.jet.position;
-      cam.position.set(jp.x - 9 + k * 4, jp.y + 2.5 + k * 3, jp.z + 26 + k * 10); cam.lookAt(jp.x, jp.y + 1, jp.z - 20);
+      cam.position.set(jp.x + mir * (-9 + k * 4), jp.y + 2.5 + k * 3, jp.z + 26 + k * 10); cam.lookAt(jp.x, jp.y + 1, jp.z - 20);
     } else {
       const k = ease(Math.min(1, (t - sh.t) / sh.d));
-      cam.position.set(lerp(sh.from[0], sh.to[0], k), lerp(sh.from[1], sh.to[1], k), lerp(sh.from[2], sh.to[2], k));
-      cam.lookAt(lerp(sh.look[0], sh.lookTo[0], k), lerp(sh.look[1], sh.lookTo[1], k), lerp(sh.look[2], sh.lookTo[2], k));
+      cam.position.set(mir * lerp(sh.from[0], sh.to[0], k), lerp(sh.from[1], sh.to[1], k), lerp(sh.from[2], sh.to[2], k));
+      cam.lookAt(mir * lerp(sh.look[0], sh.lookTo[0], k), lerp(sh.look[1], sh.lookTo[1], k), lerp(sh.look[2], sh.lookTo[2], k));
       if (sh === this.shots[5]) cam.lookAt(this.jet.position.x, 3, Math.min(this.jet.position.z, -10));
     }
     cam.position.y += Math.sin(t * 1.3) * 0.02; // handheld breath
     this.sun.target.position.copy(cam.position).setY(0); this.sun.position.copy(this.sun.target.position).add(new V3(0, 0.07, -1).normalize().multiplyScalar(200));
-    if (t > this.total) this.done = true;
+    if (t > this.total && !(this.loopUntil && this.t < this.loopUntil - 12)) this.done = true;
   }
   dispose() { this.scene.traverse((o) => { o.geometry?.dispose?.(); }); }
 }

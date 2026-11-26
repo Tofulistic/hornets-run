@@ -469,6 +469,7 @@ function stopMusic() { if (flightTrack === 'mine') music.stop(); if (flightTrack
 function applyDisplay() { document.body.classList.toggle('cleanview', !!game && cfg.display === 'cine'); }
 function startGame() {
   $('loadMsg').textContent = 'Building world…'; sound.init();
+  if (menuSong) { music.stop(); menuSong = false; $('rights').classList.remove('show'); }
   setTimeout(() => {
     try {
       if (game) { game.dispose(); game = null; }
@@ -542,7 +543,7 @@ function musicUI() {
 }
 music.onchange = musicUI; musicUI();
 $('btnMusic').onclick = () => $('musicFile').click();
-$('musicFile').onchange = async (e) => { const f = e.target.files[0]; if (f) { $('musicName').textContent = 'Loading…'; await music.load(f); } e.target.value = ''; };
+$('musicFile').onchange = async (e) => { const f = e.target.files[0]; if (f) { $('musicName').textContent = 'Loading…'; await music.load(f); cfg.introMusic = 'mine'; saveCfg(); syncSeg(); } e.target.value = ''; };
 $('btnMusicClear').onclick = () => music.clear();
 $('btnReplay').onclick = () => { $('menu').classList.add('hidden'); playIntro(); };
 
@@ -575,28 +576,44 @@ function menuBackdrop() {
 }
 
 // ---------------- splash (disclaimer) + intro montage
-let intro = null, introSong = false;
-function playIntro() {
-  sound.init(); menuScene?.dispose(); intro = new Intro(renderer); intro.resize();
-  document.body.classList.add('cine'); $('introUI').classList.remove('hidden'); $('cards').innerHTML = ''; $('titleCard').classList.remove('show');
+let intro = null, introSong = false, menuSong = false;
+let introSongTimer = 0;
+async function playIntro() {
+  sound.init(); menuScene?.dispose();
   introSong = cfg.introMusic === 'mine' && music.loaded;
-  if (introSong) { music.audio.loop = false; music.play(); $('rights').innerHTML = `♪ “${music.name.replace(/[<>&]/g, '')}” — all rights belong to its owners. Played from your device, not distributed with this game.`; $('rights').classList.add('show'); }
-  else if (cfg.introMusic !== 'off') anthem.start();
-  intro.cardsShown = new Set();
+  let pre = 0, delay = 0, loopUntil = 0;
+  if (introSong) {
+    // line the title up with the song's big moment, and keep the montage going for the length of the song
+    const hit = await music.hitTime();
+    if (hit != null) { if (hit > 20.9) pre = hit - 20.9; else delay = 20.9 - hit; }
+    loopUntil = Math.min(music.duration + delay, 240);
+  }
+  intro = new Intro(renderer, { pre, loopUntil }); intro.songDelay = delay; intro.resize(); intro.cardsShown = new Set();
+  document.body.classList.add('cine'); $('introUI').classList.remove('hidden'); $('cards').innerHTML = ''; $('titleCard').classList.remove('show');
+  if (introSong) {
+    music.audio.loop = false; clearTimeout(introSongTimer); introSongTimer = setTimeout(() => music.play(), delay * 1000);
+    $('rights').innerHTML = `♪ “${music.name.replace(/[<>&]/g, '')}” — all rights belong to its owners. Played from your device, not distributed with this game.`; $('rights').classList.add('show');
+  } else if (cfg.introMusic !== 'off') anthem.start();
 }
 function skipIntro() { if (!intro) return; intro.skipping = true; endIntro(); }
 function endIntro() {
-  if (!intro) return; intro.dispose(); intro = null; document.body.classList.remove('cine'); $('introUI').classList.add('hidden'); $('rights').classList.remove('show');
-  if (introSong) music.stop(); else anthem.fade(2);
+  if (!intro) return; intro.dispose(); intro = null; document.body.classList.remove('cine'); $('introUI').classList.add('hidden'); if (!introSong) $('rights').classList.remove('show');
+  clearTimeout(introSongTimer);
+  if (introSong) { // the song carries on quietly under the menu until it ends or you fly
+    if (!music.playing) music.stop(); else { music.audio.volume = music.vol * 0.55; menuSong = true; music.audio.onended = () => { menuSong = false; $('rights').classList.remove('show'); }; }
+  } else anthem.fade(2);
   cfg.seenIntro = true; saveCfg();
   $('menu').classList.remove('hidden'); menuBackdrop(); placeInd(true); enterMenu();
 }
 function introFrame(dt) {
-  intro.update(dt); const t = intro.t;
+  // lock the pictures to the music clock so the title always lands on the beat, even if frames drop
+  const clock = introSong ? (music.audio.paused && !music.audio.currentTime ? null : music.audio.currentTime + intro.songDelay) : anthem.playing ? anthem.time : null;
+  if (clock != null && clock > intro.t) dt = Math.min(0.25, clock - intro.t); else if (clock != null) dt = 0;
+  intro.update(dt); const t = intro.u;
   for (const [i, c] of CARDS.entries()) {
     if (t >= c.t && !intro.cardsShown.has(i)) { intro.cardsShown.add(i); const el = document.createElement('p'); el.className = 'card'; el.innerHTML = c.html; $('cards').appendChild(el); requestAnimationFrame(() => el.classList.add('show')); setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 900); }, c.d * 1000); }
   }
-  if (t > 20.9) $('titleCard').classList.add('show');
+  $('titleCard').classList.toggle('show', t > 20.9 && t < 33 && intro.cycle === 0);
   renderer.toneMappingExposure = 1.05; bloom.strength = 0.55; rpass.scene = intro.scene; rpass.camera = intro.camera; composer.render();
   if (intro.done) endIntro();
 }
@@ -619,4 +636,4 @@ function frame(now) {
   if (!game && !padMatch) padStatus();
 }
 requestAnimationFrame(frame);
-window.__toprc = { sim(sec, fn) { const log = []; for (let i = 0; i < sec * 60; i++) { fn?.(game, i / 60); game.update(1 / 60, false); if (i % 60 === 0) { const b = game.body; log.push(`${i / 60}s p${b.pos.toArray().map((v) => v.toFixed(0))} v${b.airspeed.toFixed(1)} ${b.crashReason || ''} ${game.M.phase || ''}`); } } return log; }, input, get game() { return game; }, cfg, startGame, skipIntro, get intro() { return intro; } };
+window.__toprc = { music, playIntro, sim(sec, fn) { const log = []; for (let i = 0; i < sec * 60; i++) { fn?.(game, i / 60); game.update(1 / 60, false); if (i % 60 === 0) { const b = game.body; log.push(`${i / 60}s p${b.pos.toArray().map((v) => v.toFixed(0))} v${b.airspeed.toFixed(1)} ${b.crashReason || ''} ${game.M.phase || ''}`); } } return log; }, input, get game() { return game; }, cfg, startGame, skipIntro, get intro() { return intro; } };
