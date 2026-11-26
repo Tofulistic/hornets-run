@@ -75,7 +75,9 @@ export function initSetup(input, onClose) {
       if (detecting) {
         const ch = CHANNELS.find((c) => c.key === detecting);
         let bi = -1, bd = 0;
-        pad.axes.forEach((v, i) => { const d = v - base[i]; if (Math.abs(d) > Math.abs(bd)) { bd = d; bi = i; } });
+        // a switch must never grab a stick's axis (that's how throttle could end up acting as the arm switch)
+        const sticks = ch.sw ? ['thr', 'yaw', 'pitch', 'roll'].map((k) => input.map[k].axis) : [];
+        pad.axes.forEach((v, i) => { if (sticks.includes(i)) return; const d = v - base[i]; if (Math.abs(d) > Math.abs(bd)) { bd = d; bi = i; } });
         if (Math.abs(bd) > 0.6) finishDetect(ch, { type: 'axis', index: bi, delta: bd });
         else if (ch.sw) {
           const k = pad.buttons.findIndex((b, i) => b.pressed !== baseBtns[i]);
@@ -96,12 +98,15 @@ export function initSetup(input, onClose) {
   }
 
   $('btnCal').onclick = () => {
-    if (!calib) { calib = []; $('btnCal').textContent = 'Finish calibration'; $('setupPrompt').textContent = 'Move both sticks around their full range (all corners), then click Finish calibration.'; return; }
+    if (!calib) { calib = []; $('btnCal').textContent = 'Finish calibration'; $('setupPrompt').textContent = 'Move both sticks around their full range: throttle all the way DOWN and all the way UP, the other stick to every corner. Then click Finish calibration.'; return; }
+    const skipped = [];
     for (const k of ['thr', 'yaw', 'pitch', 'roll']) {
       const m = input.map[k]; const c = calib[m.axis];
-      if (c && c[1] - c[0] > 0.5) { m.min = c[0]; m.max = c[1]; }
+      // only accept a range that covers (nearly) the whole stick travel, otherwise half-stick would read as zero
+      if (c && c[1] - c[0] > 1.5) { m.min = c[0]; m.max = c[1]; } else skipped.push(k === 'thr' ? 'throttle' : k);
     }
-    input.save(); calib = null; $('btnCal').textContent = 'Calibrate ranges'; $('setupPrompt').textContent = '✓ Calibration saved.';
+    input.save(); calib = null; $('btnCal').textContent = 'Calibrate ranges';
+    $('setupPrompt').textContent = skipped.length ? `✓ Saved. Kept the old range for ${skipped.join(', ')}: move ${skipped.length > 1 ? 'them' : 'it'} all the way to both ends next time.` : '✓ Calibration saved.';
   };
   $('btnDefaults').onclick = () => { input.resetDefaults(); render(); $('setupPrompt').textContent = 'Defaults restored (AETR: roll 0, pitch 1, throttle 2, yaw 3).'; };
   $('btnSetupDone').onclick = () => close();

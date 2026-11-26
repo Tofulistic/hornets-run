@@ -47,6 +47,11 @@ export class Input {
   }
   axisVal(pad, ch) {
     const c = this.map[ch]; const raw = pad.axes[c.axis] ?? 0;
+    // self-healing range: if the stick goes past the saved end points, the saved range was too short
+    // (e.g. calibrated without pulling the throttle right down), so widen it and remember
+    if (raw < c.min - 0.01) { c.min = raw; this.rangeDirty = true; }
+    if (raw > c.max + 0.01) { c.max = raw; this.rangeDirty = true; }
+    if (this.rangeDirty && performance.now() - (this.lastSave || 0) > 2000) { this.lastSave = performance.now(); this.rangeDirty = false; this.save(); }
     let v = ((raw - c.min) / (c.max - c.min || 1)) * 2 - 1;
     v = Math.max(-1, Math.min(1, v));
     if (c.inv) v = -v;
